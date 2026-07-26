@@ -1,6 +1,9 @@
 package com.agent.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -17,7 +20,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     botToken: String,
@@ -26,20 +29,17 @@ fun SettingsScreen(
     baseUrl: String,
     modelName: String,
     availableModels: List<String>,
-    modelsLoading: Boolean,
-    modelError: String?,
+    testLoading: Boolean,
+    testResult: String?,
     onBotTokenChange: (String) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onBaseUrlChange: (String) -> Unit,
     onModelChange: (String) -> Unit,
-    onFetchModels: () -> Unit,
+    onTestApi: () -> Unit,
     onSetupAccessibility: () -> Unit
 ) {
     var showBotToken by remember { mutableStateOf(false) }
     var showApiKey by remember { mutableStateOf(false) }
-    var modelExpanded by remember { mutableStateOf(false) }
-    var manualModelInput by remember { mutableStateOf("") }
-    var showManualInput by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -68,10 +68,7 @@ fun SettingsScreen(
                     visualTransformation = if (showBotToken) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { showBotToken = !showBotToken }) {
-                            Icon(
-                                if (showBotToken) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = null
-                            )
+                            Icon(if (showBotToken) Icons.Default.VisibilityOff else Icons.Default.Visibility, null)
                         }
                     },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
@@ -80,17 +77,14 @@ fun SettingsScreen(
                 if (detectedChatId.isNotBlank()) {
                     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Person, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Chat ID: $detectedChatId", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                            Text("Chat ID: $detectedChatId", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 } else {
-                    Text(
-                        "Start Agent and send a message to your bot on Telegram — Chat ID auto-detects.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text("Start Agent and message your bot on Telegram — Chat ID auto-detects.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -99,7 +93,7 @@ fun SettingsScreen(
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.Memory, null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
                     Text("NVIDIA AI (OpenAI Compatible)", style = MaterialTheme.typography.titleMedium)
                 }
@@ -113,10 +107,7 @@ fun SettingsScreen(
                     visualTransformation = if (showApiKey) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { showApiKey = !showApiKey }) {
-                            Icon(
-                                if (showApiKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = null
-                            )
+                            Icon(if (showApiKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, null)
                         }
                     },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
@@ -132,107 +123,66 @@ fun SettingsScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                 )
 
-                // Model selection
-                if (!showManualInput && availableModels.isNotEmpty()) {
-                    ExposedDropdownMenuBox(
-                        expanded = modelExpanded,
-                        onExpandedChange = { modelExpanded = it }
-                    ) {
-                        OutlinedTextField(
-                            value = modelName.ifBlank { "Select a model..." },
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Model") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor()
+                Text("Select Model", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium)
+
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(availableModels) { model ->
+                        val isSelected = model == modelName
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { onModelChange(model) },
+                            label = { Text(model, fontSize = 11.sp, maxLines = 1) }
                         )
-                        ExposedDropdownMenu(
-                            expanded = modelExpanded,
-                            onDismissRequest = { modelExpanded = false }
-                        ) {
-                            availableModels.forEach { model ->
-                                DropdownMenuItem(
-                                    text = { Text(model, fontSize = 13.sp) },
-                                    onClick = {
-                                        onModelChange(model)
-                                        modelExpanded = false
-                                        showManualInput = false
-                                    }
-                                )
-                            }
-                        }
                     }
-                } else {
-                    OutlinedTextField(
-                        value = if (showManualInput) manualModelInput else modelName,
-                        onValueChange = {
-                            manualModelInput = it
-                            onModelChange(it)
-                        },
-                        label = { Text("Model") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("meta/llama-3.1-405b-instruct") }
-                    )
                 }
 
+                OutlinedTextField(
+                    value = modelName,
+                    onValueChange = onModelChange,
+                    label = { Text("Or type model name") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("meta/llama-3.1-405b-instruct") }
+                )
+
+                // Test API button + result
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilledTonalButton(
-                        onClick = onFetchModels,
-                        enabled = apiKey.isNotBlank() && !modelsLoading,
+                    Button(
+                        onClick = onTestApi,
+                        enabled = apiKey.isNotBlank() && !testLoading,
                         modifier = Modifier.weight(1f)
                     ) {
-                        if (modelsLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
-                            )
+                        if (testLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary)
                             Spacer(Modifier.width(8.dp))
-                            Text("Fetching...")
                         } else {
-                            Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.NetworkCheck, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Fetch Models")
                         }
+                        Text("Test API")
                     }
+                }
 
-                    OutlinedButton(
-                        onClick = {
-                            showManualInput = !showManualInput
-                            if (!showManualInput) {
-                                manualModelInput = ""
-                            }
-                        }
-                    ) {
-                        Icon(
-                            if (showManualInput) Icons.Default.List else Icons.Default.Edit,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
+                testResult?.let {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (it.startsWith("✅"))
+                                MaterialTheme.colorScheme.primaryContainer
+                            else
+                                MaterialTheme.colorScheme.errorContainer
                         )
+                    ) {
+                        Text(it, modifier = Modifier.padding(12.dp), fontSize = 13.sp)
                     }
                 }
 
-                modelError?.let { error ->
-                    Text(
-                        error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (error.startsWith("Found"))
-                            MaterialTheme.colorScheme.primary
-                        else
-                            MaterialTheme.colorScheme.error,
-                        fontSize = 12.sp
-                    )
-                }
-
-                Text(
-                    "Enter API Key and tap 'Fetch Models' to auto-detect. Or type manually.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp
-                )
+                Text("Enter API Key and tap 'Test API' to verify connection.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -240,22 +190,16 @@ fun SettingsScreen(
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.TouchApp, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.TouchApp, null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
                     Text("Accessibility Service", style = MaterialTheme.typography.titleMedium)
                 }
 
-                Text(
-                    "Required for phone control. Enable in system settings.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("Required for phone control. Enable in system settings.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-                Button(
-                    onClick = onSetupAccessibility,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Settings, contentDescription = null)
+                Button(onClick = onSetupAccessibility, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Settings, null)
                     Spacer(Modifier.width(8.dp))
                     Text("Open Accessibility Settings")
                 }

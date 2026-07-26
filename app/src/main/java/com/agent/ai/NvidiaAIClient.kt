@@ -51,7 +51,9 @@ class NvidiaAIClient(
         @SerializedName("messages") val messages: List<ChatMessage>,
         @SerializedName("temperature") val temperature: Double = 0.7,
         @SerializedName("max_tokens") val maxTokens: Int = 1024,
-        @SerializedName("top_p") val topP: Double = 0.95
+        @SerializedName("top_p") val topP: Double = 0.95,
+        @SerializedName("tools") val tools: List<ToolDef>? = null,
+        @SerializedName("tool_choice") val toolChoice: String? = null
     )
 
     data class ChatResponse(
@@ -67,7 +69,30 @@ class NvidiaAIClient(
 
     data class ResponseMessage(
         @SerializedName("role") val role: String? = null,
-        @SerializedName("content") val content: String? = null
+        @SerializedName("content") val content: String? = null,
+        @SerializedName("tool_calls") val toolCalls: List<ToolCall>? = null
+    )
+
+    data class ToolCall(
+        @SerializedName("id") val id: String? = null,
+        @SerializedName("type") val type: String? = null,
+        @SerializedName("function") val function: ToolCallFunction? = null
+    )
+
+    data class ToolCallFunction(
+        @SerializedName("name") val name: String? = null,
+        @SerializedName("arguments") val arguments: String? = null
+    )
+
+    data class ToolDef(
+        @SerializedName("type") val type: String = "function",
+        @SerializedName("function") val function: FunctionDef
+    )
+
+    data class FunctionDef(
+        @SerializedName("name") val name: String,
+        @SerializedName("description") val description: String,
+        @SerializedName("parameters") val parameters: Map<String, Any>
     )
 
     data class ErrorInfo(
@@ -140,13 +165,16 @@ class NvidiaAIClient(
     }
 
     suspend fun chat(
-        messages: List<ChatMessage>
+        messages: List<ChatMessage>,
+        tools: List<ToolDef>? = null
     ): Result<ChatResponse> {
         return withContext(Dispatchers.IO) {
             try {
                 val requestBody = ChatRequest(
                     model = model,
-                    messages = messages
+                    messages = messages,
+                    tools = tools,
+                    toolChoice = if (tools != null) "auto" else null
                 )
                 val body = gson.toJson(requestBody).toRequestBody(jsonMediaType)
                 val request = Request.Builder()

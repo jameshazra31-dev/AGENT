@@ -1,6 +1,7 @@
 package com.agent.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.agent.AgentApp
@@ -14,8 +15,12 @@ import kotlinx.coroutines.launch
 
 class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
+    companion object {
+        private const val TAG = "AgentViewModel"
+    }
+
     private var orchestrator: AgentOrchestrator? = null
-    private var aiClient: NvidiaAIClient? = null
+    private var _aiClient: NvidiaAIClient? = null
 
     val botToken = AgentApp.prefs.telegramBotToken.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
     val apiKey = AgentApp.prefs.nvidiaApiKey.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
@@ -48,54 +53,102 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val _chatLoading = MutableStateFlow(false)
     val chatLoading: StateFlow<Boolean> = _chatLoading
 
+    private val _modelError = MutableStateFlow<String?>(null)
+    val modelError: StateFlow<String?> = _modelError
+
+    private fun getOrCreateClient(): NvidiaAIClient? {
+        _aiClient?.let { return it }
+        val key = apiKey.value
+        if (key.isBlank()) return null
+        return NvidiaAIClient(
+            apiKey = key,
+            baseUrl = baseUrl.value.ifBlank { "https://integrate.api.nvidia.com/v1" },
+            model = modelName.value.ifBlank { "meta/llama-3.1-405b-instruct" }
+        ).also { _aiClient = it }
+    }
+
+    private fun rebuildClient() {
+        val key = apiKey.value
+        _aiClient = if (key.isNotBlank()) {
+            NvidiaAIClient(
+                apiKey = key,
+                baseUrl = baseUrl.value.ifBlank { "https://integrate.api.nvidia.com/v1" },
+                model = modelName.value.ifBlank { "meta/llama-3.1-405b-instruct" }
+            )
+        } else null
+    }
+
     fun updateBotToken(token: String) {
         viewModelScope.launch { AgentApp.prefs.setTelegramBotToken(token) }
     }
 
     fun updateApiKey(key: String) {
         viewModelScope.launch { AgentApp.prefs.setNvidiaApiKey(key) }
-        rebuildAIClient()
+        rebuildClient()
     }
 
     fun updateBaseUrl(url: String) {
         viewModelScope.launch { AgentApp.prefs.setNvidiaBaseUrl(url) }
-        rebuildAIClient()
+        rebuildClient()
     }
 
     fun updateModel(model: String) {
         viewModelScope.launch { AgentApp.prefs.setNvidiaModel(model) }
-        rebuildAIClient()
-    }
-
-    private fun rebuildAIClient() {
-        val key = apiKey.value
-        if (key.isNotBlank()) {
-            aiClient = NvidiaAIClient(
-                apiKey = key,
-                baseUrl = baseUrl.value.ifBlank { "https://integrate.api.nvidia.com/v1" },
-                model = modelName.value.ifBlank { "meta/llama-3.1-405b-instruct" }
-            )
-        }
+        rebuildClient()
     }
 
     fun fetchModels() {
         val key = apiKey.value
-        if (key.isBlank()) return
+        if (key.isBlank()) {
+            _modelError.value = "Enter API Key first"
+            return
+        }
         _modelsLoading.value = true
+        _modelError.value = null
+
         val client = NvidiaAIClient(
             apiKey = key,
             baseUrl = baseUrl.value.ifBlank { "https://integrate.api.nvidia.com/v1" }
         )
+
         viewModelScope.launch {
-            val result = client.fetchModels()
-            result.onSuccess { models ->
-                val ids = models.mapNotNull { it.id }
-                _availableModels.value = ids
-                if (ids.isNotEmpty() && modelName.value.isBlank()) {
-                    AgentApp.prefs.setNvidiaModel(ids.first())
+            try {
+                val result = client.fetchModels()
+                result.onSuccess { models ->
+                    val ids = models.mapNotNull { it.id }
+                    if (ids.isNotEmpty()) {
+                        _availableModels.value = ids
+                        _modelError.value = "Found ${ids.size} models"
+                        Log.d(TAG, "Models fetched: $ids")
+                        if (modelName.value.isBlank() || modelName.value !in ids) {
+                            AgentApp.prefs.setNvidiaModel(ids.first())
+                        }
+                    } else {
+                        fallbackModels()
+                    }
                 }
+                result.onFailure { error ->
+                    Log.e(TAG, "Fetch models failed: ${error.message}")
+                    fallbackModels()
+                    _modelError.value = "API error: ${error.message}. Using default models."
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "fetchModels unexpected error: ${e.message}", e)
+                fallbackModels()
+                _modelError.value = "Error: ${e.message}"
             }
             _modelsLoading.value = false
+        }
+    }
+
+    private fun fallbackModels() {
+        if (_availableModels.value.isEmpty()) {
+            _availableModels.value = NvidiaAIClient.FALLBACK_MODELS
+            if (modelName.value.isBlank()) {
+                viewModelScope.launch {
+                    AgentApp.prefs.setNvidiaModel(NvidiaAIClient.FALLBACK_MODELS.first())
+                }
+            }
         }
     }
 
@@ -103,20 +156,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         _chatMessages.value = _chatMessages.value + ChatMessage(text, isUser = true)
         _chatLoading.value = true
 
-        val client = aiClient ?: run {
-            val key = apiKey.value
-            if (key.isBlank()) {
-                _chatMessages.value = _chatMessages.value + ChatMessage(
-                    "Please configure API Key in Settings first.", false
-                )
-                _chatLoading.value = false
-                return
-            }
-            NvidiaAIClient(
-                apiKey = key,
-                baseUrl = baseUrl.value.ifBlank { "https://integrate.api.nvidia.com/v1" },
-                model = modelName.value.ifBlank { "meta/llama-3.1-405b-instruct" }
-            ).also { aiClient = it }
+        val client = getOrCreateClient()
+        if (client == null) {
+            _chatMessages.value = _chatMessages.value + ChatMessage(
+                "⚠️ API Key not configured. Go to Settings and enter your NVIDIA API Key.",
+                false
+            )
+            _chatLoading.value = false
+            return
         }
 
         val convMessages = listOf(
@@ -125,15 +172,32 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         viewModelScope.launch {
-            val result = client.chat(convMessages)
-            result.onSuccess { response ->
-                val reply = response.choices?.firstOrNull()?.message?.content
-                    ?: "No response from AI"
-                _chatMessages.value = _chatMessages.value + ChatMessage(reply, false)
-            }
-            result.onFailure { error ->
+            try {
+                val result = client.chat(convMessages)
+                result.onSuccess { response ->
+                    val reply = response.choices?.firstOrNull()?.message?.content
+                    if (reply != null && reply.isNotBlank()) {
+                        _chatMessages.value = _chatMessages.value + ChatMessage(reply, false)
+                    } else {
+                        _chatMessages.value = _chatMessages.value + ChatMessage(
+                            "⚠️ Empty response from AI. Check your model and API key in Settings.",
+                            false
+                        )
+                    }
+                }
+                result.onFailure { error ->
+                    val errMsg = error.message ?: "Unknown error"
+                    Log.e(TAG, "Chat failed: $errMsg")
+                    _chatMessages.value = _chatMessages.value + ChatMessage(
+                        "⚠️ API Error: $errMsg\n\nCheck your API key and model in Settings.",
+                        false
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "sendChatMessage error: ${e.message}", e)
                 _chatMessages.value = _chatMessages.value + ChatMessage(
-                    "Error: ${error.message}", false
+                    "⚠️ Error: ${e.message}",
+                    false
                 )
             }
             _chatLoading.value = false
@@ -161,7 +225,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             baseUrl = baseUrl.value.ifBlank { "https://integrate.api.nvidia.com/v1" },
             model = modelName.value.ifBlank { "meta/llama-3.1-405b-instruct" }
         )
-        aiClient = ai
+        _aiClient = ai
         val bot = TelegramBotManager(botToken = token)
 
         orchestrator?.stop()

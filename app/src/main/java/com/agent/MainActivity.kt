@@ -44,6 +44,7 @@ fun AgentMain() {
     val modelName by viewModel.modelName.collectAsState()
     val availableModels by viewModel.availableModels.collectAsState()
     val modelsLoading by viewModel.modelsLoading.collectAsState()
+    val modelError by viewModel.modelError.collectAsState()
     val detectedChatId by viewModel.detectedChatId.collectAsState()
     val serviceStatus by viewModel.serviceStatus.collectAsState()
     val agentRunning by viewModel.isRunning.collectAsState()
@@ -108,6 +109,7 @@ fun AgentMain() {
                     modelName = modelName,
                     availableModels = availableModels,
                     modelsLoading = modelsLoading,
+                    modelError = modelError,
                     onBotTokenChange = viewModel::updateBotToken,
                     onApiKeyChange = viewModel::updateApiKey,
                     onBaseUrlChange = viewModel::updateBaseUrl,

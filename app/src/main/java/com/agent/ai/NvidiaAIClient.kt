@@ -1,5 +1,6 @@
 package com.agent.ai
 
+import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +16,18 @@ class NvidiaAIClient(
     private val baseUrl: String = "https://integrate.api.nvidia.com/v1",
     private val model: String = "meta/llama-3.1-405b-instruct"
 ) {
+    companion object {
+        private const val TAG = "NvidiaAI"
+        val FALLBACK_MODELS = listOf(
+            "meta/llama-3.1-405b-instruct",
+            "meta/llama-3.1-70b-instruct",
+            "meta/llama-3.1-8b-instruct",
+            "mistralai/mistral-large",
+            "mistralai/mixtral-8x22b-instruct-v0.1",
+            "google/gemma-2-27b-it",
+            "microsoft/phi-3-mini-128k-instruct"
+        )
+    }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
@@ -35,6 +48,7 @@ class NvidiaAIClient(
         @SerializedName("messages") val messages: List<ChatMessage>,
         @SerializedName("temperature") val temperature: Double = 0.3,
         @SerializedName("max_tokens") val maxTokens: Int = 2000,
+        @SerializedName("top_p") val topP: Double = 0.9,
         @SerializedName("tools") val tools: List<ToolDef>? = null,
         @SerializedName("tool_choice") val toolChoice: String? = null
     )
@@ -58,7 +72,8 @@ class NvidiaAIClient(
 
     data class Choice(
         @SerializedName("message") val message: ResponseMessage? = null,
-        @SerializedName("finish_reason") val finishReason: String? = null
+        @SerializedName("finish_reason") val finishReason: String? = null,
+        @SerializedName("index") val index: Int? = null
     )
 
     data class ResponseMessage(
@@ -78,13 +93,21 @@ class NvidiaAIClient(
         @SerializedName("arguments") val arguments: String? = null
     )
 
+    data class ErrorDetail(
+        @SerializedName("message") val message: String? = null,
+        @SerializedName("type") val type: String? = null,
+        @SerializedName("code") val code: String? = null
+    )
+
     data class ErrorInfo(
         @SerializedName("message") val message: String? = null,
-        @SerializedName("type") val type: String? = null
+        @SerializedName("type") val type: String? = null,
+        @SerializedName("code") val code: String? = null
     )
 
     data class ModelsResponse(
-        @SerializedName("data") val data: List<ModelInfo>? = null
+        @SerializedName("data") val data: List<ModelInfo>? = null,
+        @SerializedName("object") val objectType: String? = null
     )
 
     data class ModelInfo(
@@ -100,33 +123,30 @@ class NvidiaAIClient(
                 val request = Request.Builder()
                     .url("$baseUrl/models")
                     .addHeader("Authorization", "Bearer $apiKey")
+                    .addHeader("Accept", "application/json")
+                    .addHeader("User-Agent", "AGENT-Android/1.0")
                     .build()
                 val response = client.newCall(request).execute()
-                val body = gson.fromJson(response.body?.string(), ModelsResponse::class.java)
-                if (body?.data != null) Result.success(body.data)
-                else Result.failure(Exception("No models found"))
+                val bodyStr = response.body?.string()
+                Log.d(TAG, "Models response code: ${response.code}, body: ${bodyStr?.take(500)}")
+
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        Exception("HTTP ${response.code}: ${bodyStr?.take(200)}")
+                    )
+                }
+
+                val parsed = gson.fromJson(bodyStr, ModelsResponse::class.java)
+                if (parsed?.data != null && parsed.data.isNotEmpty()) {
+                    Result.success(parsed.data)
+                } else {
+                    Result.failure(Exception("No models returned from API"))
+                }
             } catch (e: Exception) {
+                Log.e(TAG, "fetchModels error: ${e.message}", e)
                 Result.failure(e)
             }
         }
-    }
-
-    fun getSystemPrompt(): String = buildString {
-        appendLine("You are AGENT, an AI assistant that controls an Android phone via accessibility services.")
-        appendLine("You can perform the following actions on the phone:")
-        appendLine("1. Click on UI elements by text")
-        appendLine("2. Click at specific coordinates (x, y)")
-        appendLine("3. Type text into input fields")
-        appendLine("4. Scroll up/down/left/right")
-        appendLine("5. Go back, go home, open recent apps")
-        appendLine("6. Swipe between coordinates")
-        appendLine("7. Get current screen content")
-        appendLine("8. Wait/delay")
-        appendLine("")
-        appendLine("Analyze what the user asks and determine which phone actions to take.")
-        appendLine("Be precise with coordinates and text matching. Use the screen content to understand what's visible.")
-        appendLine("When you need to perform an action, use the available functions.")
-        appendLine("Respond in the user's language.")
     }
 
     suspend fun chat(
@@ -142,24 +162,45 @@ class NvidiaAIClient(
                     toolChoice = if (tools != null) "auto" else null
                 )
                 val json = gson.toJson(requestBody)
+                Log.d(TAG, "Chat request: $json")
+
                 val body = json.toRequestBody(jsonMediaType)
                 val request = Request.Builder()
                     .url("$baseUrl/chat/completions")
                     .addHeader("Authorization", "Bearer $apiKey")
                     .addHeader("Content-Type", "application/json")
+                    .addHeader("Accept", "application/json")
+                    .addHeader("User-Agent", "AGENT-Android/1.0")
                     .post(body)
                     .build()
 
                 val response = client.newCall(request).execute()
                 val responseBody = response.body?.string()
+                Log.d(TAG, "Chat response code: ${response.code}, body: ${responseBody?.take(500)}")
+
+                if (!response.isSuccessful) {
+                    val errMsg = try {
+                        val err = gson.fromJson(responseBody, ErrorDetail::class.java)
+                        err?.message ?: responseBody?.take(200)
+                    } catch (e: Exception) {
+                        responseBody?.take(200)
+                    }
+                    return@withContext Result.failure(
+                        Exception("HTTP ${response.code}: ${errMsg ?: "Unknown error"}")
+                    )
+                }
+
                 val parsed = gson.fromJson(responseBody, ChatResponse::class.java)
 
                 if (parsed?.error != null) {
                     Result.failure(Exception(parsed.error.message ?: "API Error"))
+                } else if (parsed?.choices == null || parsed.choices.isEmpty()) {
+                    Result.failure(Exception("No response choices returned"))
                 } else {
                     Result.success(parsed)
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "chat error: ${e.message}", e)
                 Result.failure(e)
             }
         }

@@ -15,6 +15,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,6 +27,7 @@ fun SettingsScreen(
     modelName: String,
     availableModels: List<String>,
     modelsLoading: Boolean,
+    modelError: String?,
     onBotTokenChange: (String) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onBaseUrlChange: (String) -> Unit,
@@ -36,6 +38,8 @@ fun SettingsScreen(
     var showBotToken by remember { mutableStateOf(false) }
     var showApiKey by remember { mutableStateOf(false) }
     var modelExpanded by remember { mutableStateOf(false) }
+    var manualModelInput by remember { mutableStateOf("") }
+    var showManualInput by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -81,14 +85,9 @@ fun SettingsScreen(
                             Text("Chat ID: $detectedChatId", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                         }
                     }
-                    Text(
-                        "Auto-detected. Message your bot on Telegram to connect.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 } else {
                     Text(
-                        "Start Agent and message your bot on Telegram — Chat ID will auto-detect.",
+                        "Start Agent and send a message to your bot on Telegram — Chat ID auto-detects.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -133,24 +132,19 @@ fun SettingsScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                 )
 
-                // Model selector with fetch
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                // Model selection
+                if (!showManualInput && availableModels.isNotEmpty()) {
                     ExposedDropdownMenuBox(
                         expanded = modelExpanded,
-                        onExpandedChange = { modelExpanded = it },
-                        modifier = Modifier.weight(1f)
+                        onExpandedChange = { modelExpanded = it }
                     ) {
                         OutlinedTextField(
-                            value = modelName,
+                            value = modelName.ifBlank { "Select a model..." },
                             onValueChange = {},
                             readOnly = true,
                             label = { Text("Model") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
-                            modifier = Modifier.menuAnchor()
+                            modifier = Modifier.fillMaxWidth().menuAnchor()
                         )
                         ExposedDropdownMenu(
                             expanded = modelExpanded,
@@ -158,32 +152,86 @@ fun SettingsScreen(
                         ) {
                             availableModels.forEach { model ->
                                 DropdownMenuItem(
-                                    text = { Text(model) },
+                                    text = { Text(model, fontSize = 13.sp) },
                                     onClick = {
                                         onModelChange(model)
                                         modelExpanded = false
+                                        showManualInput = false
                                     }
                                 )
                             }
                         }
                     }
+                } else {
+                    OutlinedTextField(
+                        value = if (showManualInput) manualModelInput else modelName,
+                        onValueChange = {
+                            manualModelInput = it
+                            onModelChange(it)
+                        },
+                        label = { Text("Model") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("meta/llama-3.1-405b-instruct") }
+                    )
+                }
 
-                    FilledTonalIconButton(
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilledTonalButton(
                         onClick = onFetchModels,
-                        enabled = apiKey.isNotBlank() && !modelsLoading
+                        enabled = apiKey.isNotBlank() && !modelsLoading,
+                        modifier = Modifier.weight(1f)
                     ) {
                         if (modelsLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Fetching...")
                         } else {
-                            Icon(Icons.Default.Refresh, contentDescription = "Fetch Models")
+                            Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Fetch Models")
                         }
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            showManualInput = !showManualInput
+                            if (!showManualInput) {
+                                manualModelInput = ""
+                            }
+                        }
+                    ) {
+                        Icon(
+                            if (showManualInput) Icons.Default.List else Icons.Default.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 
+                modelError?.let { error ->
+                    Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (error.startsWith("Found"))
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
+                    )
+                }
+
                 Text(
-                    "Enter API Key and tap refresh to auto-fetch available models from NVIDIA.",
+                    "Enter API Key and tap 'Fetch Models' to auto-detect. Or type manually.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp
                 )
             }
         }

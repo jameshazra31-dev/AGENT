@@ -16,7 +16,6 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private var orchestrator: AgentOrchestrator? = null
 
     val botToken = AgentApp.prefs.telegramBotToken.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
-    val chatId = AgentApp.prefs.telegramChatId.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
     val apiKey = AgentApp.prefs.nvidiaApiKey.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
     val baseUrl = AgentApp.prefs.nvidiaBaseUrl.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
     val modelName = AgentApp.prefs.nvidiaModel.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
@@ -32,12 +31,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val _agentRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _agentRunning
 
+    private val _detectedChatId = MutableStateFlow("")
+    val detectedChatId: StateFlow<String> = _detectedChatId
+
     fun updateBotToken(token: String) {
         viewModelScope.launch { AgentApp.prefs.setTelegramBotToken(token) }
-    }
-
-    fun updateChatId(id: String) {
-        viewModelScope.launch { AgentApp.prefs.setTelegramChatId(id) }
     }
 
     fun updateApiKey(key: String) {
@@ -74,13 +72,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         orchestrator?.stop()
         orchestrator = AgentOrchestrator(aiClient, bot).also {
             viewModelScope.launch {
-                it.log.collect { newLog ->
-                    _logs.value = newLog
-                }
+                it.log.collect { newLog -> _logs.value = newLog }
             }
             viewModelScope.launch {
-                it.isRunning.collect { running ->
-                    _agentRunning.value = running
+                it.isRunning.collect { running -> _agentRunning.value = running }
+            }
+            viewModelScope.launch {
+                it.detectedChatIdFlow.collect { id ->
+                    if (id.isNotBlank()) _detectedChatId.value = id
                 }
             }
             it.start()

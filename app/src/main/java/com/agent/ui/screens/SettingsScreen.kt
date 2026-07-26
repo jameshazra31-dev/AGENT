@@ -21,12 +21,11 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun SettingsScreen(
     botToken: String,
-    chatId: String,
+    detectedChatId: String,
     apiKey: String,
     baseUrl: String,
     modelName: String,
     onBotTokenChange: (String) -> Unit,
-    onChatIdChange: (String) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onBaseUrlChange: (String) -> Unit,
     onModelChange: (String) -> Unit,
@@ -71,14 +70,19 @@ fun SettingsScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
                 )
 
-                OutlinedTextField(
-                    value = chatId,
-                    onValueChange = onChatIdChange,
-                    label = { Text("Chat ID") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
+                if (detectedChatId.isNotBlank()) {
+                    Text(
+                        "Chat ID: $detectedChatId",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        "Auto-detected from first incoming message. Message your bot on Telegram to register.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 

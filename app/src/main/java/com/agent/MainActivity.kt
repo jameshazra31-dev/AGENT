@@ -38,10 +38,10 @@ fun AgentMain() {
     var selectedTab by remember { mutableIntStateOf(0) }
 
     val botToken by viewModel.botToken.collectAsState()
-    val chatId by viewModel.chatId.collectAsState()
     val apiKey by viewModel.apiKey.collectAsState()
     val baseUrl by viewModel.baseUrl.collectAsState()
     val modelName by viewModel.modelName.collectAsState()
+    val detectedChatId by viewModel.detectedChatId.collectAsState()
     val serviceStatus by viewModel.serviceStatus.collectAsState()
     val agentRunning by viewModel.isRunning.collectAsState()
     val logs by viewModel.logs.collectAsState()
@@ -81,12 +81,11 @@ fun AgentMain() {
                 )
                 1 -> SettingsScreen(
                     botToken = botToken,
-                    chatId = chatId,
+                    detectedChatId = detectedChatId,
                     apiKey = apiKey,
                     baseUrl = baseUrl,
                     modelName = modelName,
                     onBotTokenChange = viewModel::updateBotToken,
-                    onChatIdChange = viewModel::updateChatId,
                     onApiKeyChange = viewModel::updateApiKey,
                     onBaseUrlChange = viewModel::updateBaseUrl,
                     onModelChange = viewModel::updateModel,

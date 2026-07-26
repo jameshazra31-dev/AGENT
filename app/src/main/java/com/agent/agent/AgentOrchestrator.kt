@@ -31,9 +31,13 @@ class AgentOrchestrator(
     private val scope = CoroutineScope(Dispatchers.Default + Job())
     private val gson = Gson()
     private var pollingJob: Job? = null
+    private var detectedChatId: String? = null
 
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
+
+    private val _detectedChatId = MutableStateFlow("")
+    val detectedChatIdFlow: StateFlow<String> = _detectedChatId
 
     private val _log = MutableStateFlow<List<String>>(emptyList())
     val log: StateFlow<List<String>> = _log
@@ -130,7 +134,13 @@ class AgentOrchestrator(
                     for (update in updates) {
                         val msg = update.message
                         if (msg != null && msg.text != null) {
-                            handleUserMessage(msg.chat.id.toString(), msg.text!!)
+                            val chatId = msg.chat.id.toString()
+                            if (detectedChatId == null) {
+                                detectedChatId = chatId
+                                _detectedChatId.value = chatId
+                                addLog("Chat ID detected: $chatId")
+                            }
+                            handleUserMessage(chatId, msg.text!!)
                         }
                     }
                 } catch (e: Exception) {

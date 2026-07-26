@@ -5,9 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.agent.ui.AgentViewModel
+import com.agent.ui.screens.ChatScreen
 import com.agent.ui.screens.MainScreen
 import com.agent.ui.screens.SettingsScreen
 import com.agent.ui.theme.AgentTheme
@@ -41,14 +42,16 @@ fun AgentMain() {
     val apiKey by viewModel.apiKey.collectAsState()
     val baseUrl by viewModel.baseUrl.collectAsState()
     val modelName by viewModel.modelName.collectAsState()
+    val availableModels by viewModel.availableModels.collectAsState()
+    val modelsLoading by viewModel.modelsLoading.collectAsState()
     val detectedChatId by viewModel.detectedChatId.collectAsState()
     val serviceStatus by viewModel.serviceStatus.collectAsState()
     val agentRunning by viewModel.isRunning.collectAsState()
     val logs by viewModel.logs.collectAsState()
+    val chatMessages by viewModel.chatMessages.collectAsState()
+    val chatLoading by viewModel.chatLoading.collectAsState()
 
-    LaunchedEffect(Unit) {
-        viewModel.checkServiceStatus()
-    }
+    LaunchedEffect(Unit) { viewModel.checkServiceStatus() }
 
     Scaffold(
         bottomBar = {
@@ -62,6 +65,18 @@ fun AgentMain() {
                 NavigationBarItem(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
+                    icon = {
+                        BadgedBox(badge = {
+                            if (chatMessages.isNotEmpty()) Badge()
+                        }) {
+                            Icon(Icons.Default.Chat, contentDescription = null)
+                        }
+                    },
+                    label = { Text("Chat") }
+                )
+                NavigationBarItem(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
                     icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                     label = { Text("Settings") }
                 )
@@ -76,19 +91,28 @@ fun AgentMain() {
                     logs = logs,
                     onStartAgent = { viewModel.startAgent() },
                     onStopAgent = { viewModel.stopAgent() },
-                    onOpenSettings = { selectedTab = 1 },
+                    onOpenSettings = { selectedTab = 2 },
                     onRefreshStatus = { viewModel.checkServiceStatus() }
                 )
-                1 -> SettingsScreen(
+                1 -> ChatScreen(
+                    messages = chatMessages,
+                    onSendMessage = { viewModel.sendChatMessage(it) },
+                    isRunning = agentRunning,
+                    onClearChat = viewModel::clearChat
+                )
+                2 -> SettingsScreen(
                     botToken = botToken,
                     detectedChatId = detectedChatId,
                     apiKey = apiKey,
                     baseUrl = baseUrl,
                     modelName = modelName,
+                    availableModels = availableModels,
+                    modelsLoading = modelsLoading,
                     onBotTokenChange = viewModel::updateBotToken,
                     onApiKeyChange = viewModel::updateApiKey,
                     onBaseUrlChange = viewModel::updateBaseUrl,
                     onModelChange = viewModel::updateModel,
+                    onFetchModels = viewModel::fetchModels,
                     onSetupAccessibility = viewModel::setupAccessibilityService
                 )
             }

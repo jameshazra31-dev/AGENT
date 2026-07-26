@@ -1,6 +1,5 @@
 package com.agent.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -25,14 +24,18 @@ fun SettingsScreen(
     apiKey: String,
     baseUrl: String,
     modelName: String,
+    availableModels: List<String>,
+    modelsLoading: Boolean,
     onBotTokenChange: (String) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onBaseUrlChange: (String) -> Unit,
     onModelChange: (String) -> Unit,
+    onFetchModels: () -> Unit,
     onSetupAccessibility: () -> Unit
 ) {
     var showBotToken by remember { mutableStateOf(false) }
     var showApiKey by remember { mutableStateOf(false) }
+    var modelExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -71,14 +74,21 @@ fun SettingsScreen(
                 )
 
                 if (detectedChatId.isNotBlank()) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Chat ID: $detectedChatId", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
                     Text(
-                        "Chat ID: $detectedChatId",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
+                        "Auto-detected. Message your bot on Telegram to connect.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                } else {
                     Text(
-                        "Auto-detected from first incoming message. Message your bot on Telegram to register.",
+                        "Start Agent and message your bot on Telegram — Chat ID will auto-detect.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -123,13 +133,57 @@ fun SettingsScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                 )
 
-                OutlinedTextField(
-                    value = modelName,
-                    onValueChange = onModelChange,
-                    label = { Text("Model") },
+                // Model selector with fetch
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("meta/llama-3.1-405b-instruct") }
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ExposedDropdownMenuBox(
+                        expanded = modelExpanded,
+                        onExpandedChange = { modelExpanded = it },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        OutlinedTextField(
+                            value = modelName,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Model") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
+                            modifier = Modifier.menuAnchor()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = modelExpanded,
+                            onDismissRequest = { modelExpanded = false }
+                        ) {
+                            availableModels.forEach { model ->
+                                DropdownMenuItem(
+                                    text = { Text(model) },
+                                    onClick = {
+                                        onModelChange(model)
+                                        modelExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    FilledTonalIconButton(
+                        onClick = onFetchModels,
+                        enabled = apiKey.isNotBlank() && !modelsLoading
+                    ) {
+                        if (modelsLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Refresh, contentDescription = "Fetch Models")
+                        }
+                    }
+                }
+
+                Text(
+                    "Enter API Key and tap refresh to auto-fetch available models from NVIDIA.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

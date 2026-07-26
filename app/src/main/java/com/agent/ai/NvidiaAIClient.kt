@@ -83,10 +83,33 @@ class NvidiaAIClient(
         @SerializedName("type") val type: String? = null
     )
 
-    data class ToolCallResult(
-        val name: String,
-        val args: Map<String, Any?>
+    data class ModelsResponse(
+        @SerializedName("data") val data: List<ModelInfo>? = null
     )
+
+    data class ModelInfo(
+        @SerializedName("id") val id: String? = null,
+        @SerializedName("object") val objectType: String? = null,
+        @SerializedName("created") val created: Long? = null,
+        @SerializedName("owned_by") val ownedBy: String? = null
+    )
+
+    suspend fun fetchModels(): Result<List<ModelInfo>> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url("$baseUrl/models")
+                    .addHeader("Authorization", "Bearer $apiKey")
+                    .build()
+                val response = client.newCall(request).execute()
+                val body = gson.fromJson(response.body?.string(), ModelsResponse::class.java)
+                if (body?.data != null) Result.success(body.data)
+                else Result.failure(Exception("No models found"))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
 
     fun getSystemPrompt(): String = buildString {
         appendLine("You are AGENT, an AI assistant that controls an Android phone via accessibility services.")

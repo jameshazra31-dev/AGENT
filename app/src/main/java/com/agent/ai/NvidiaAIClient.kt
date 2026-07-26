@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 class NvidiaAIClient(
     private val apiKey: String,
     private val baseUrl: String = "https://integrate.api.nvidia.com/v1",
-    private val model: String = "meta/llama-3.1-405b-instruct"
+    val model: String = "meta/llama-3.1-405b-instruct"
 ) {
     companion object {
         private const val TAG = "NvidiaAI"

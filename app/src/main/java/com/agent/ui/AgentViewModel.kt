@@ -4,107 +4,112 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.agent.AgentApp
 import com.agent.agent.AgentOrchestrator
 import com.agent.ai.NvidiaAIClient
 import com.agent.service.AgentAccessibilityService
-import com.agent.telegram.TelegramBotManager
-import com.agent.ui.screens.ChatMessage
-import kotlinx.coroutines.flow.*
+import com.agent.telegram.TelegramBot
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
-    companion object {
-        private const val TAG = "AgentViewModel"
-    }
+    private val TAG = "AgentViewModel"
 
-    private var orchestrator: AgentOrchestrator? = null
-    private var _aiClient: NvidiaAIClient? = null
+    // Settings state
+    private val _apiKey = MutableStateFlow("")
+    val apiKey: StateFlow<String> = _apiKey
 
-    val botToken = AgentApp.prefs.telegramBotToken.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
-    val apiKey = AgentApp.prefs.nvidiaApiKey.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
-    val baseUrl = AgentApp.prefs.nvidiaBaseUrl.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
-    val modelName = AgentApp.prefs.nvidiaModel.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), "")
+    private val _baseUrl = MutableStateFlow("https://integrate.api.nvidia.com/v1")
+    val baseUrl: StateFlow<String> = _baseUrl
 
-    private val _serviceStatus = MutableStateFlow(false)
-    val serviceStatus: StateFlow<Boolean> = _serviceStatus
+    private val _model = MutableStateFlow("meta/llama-3.1-405b-instruct")
+    val model: StateFlow<String> = _model
 
-    private val _logs = MutableStateFlow<List<String>>(emptyList())
-    val logs: StateFlow<List<String>> = _logs
+    private val _botToken = MutableStateFlow("")
+    val botToken: StateFlow<String> = _botToken
 
-    private val _agentRunning = MutableStateFlow(false)
-    val isRunning: StateFlow<Boolean> = _agentRunning
+    private val _selectedTab = MutableStateFlow(0)
+    val selectedTab: StateFlow<Int> = _selectedTab
 
-    private val _detectedChatId = MutableStateFlow("")
-    val detectedChatId: StateFlow<String> = _detectedChatId
-
-    private val _chatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
-    val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages
-
-    private val _chatLoading = MutableStateFlow(false)
-    val chatLoading: StateFlow<Boolean> = _chatLoading
-
-    private val _testResult = MutableStateFlow<String?>(null)
-    val testResult: StateFlow<String?> = _testResult
+    // Test connection state
+    private val _testResult = MutableStateFlow("")
+    val testResult: StateFlow<String> = _testResult
 
     private val _testLoading = MutableStateFlow(false)
     val testLoading: StateFlow<Boolean> = _testLoading
 
-    private val _availableModels = MutableStateFlow(NvidiaAIClient.KNOWN_MODELS)
-    val availableModels: StateFlow<List<String>> = _availableModels
+    // Chat state
+    private val _messages = MutableStateFlow<List<ChatMessageUi>>(emptyList())
+    val messages: StateFlow<List<ChatMessageUi>> = _messages
+
+    private val _chatLoading = MutableStateFlow(false)
+    val chatLoading: StateFlow<Boolean> = _chatLoading
+
+    private val _chatInput = MutableStateFlow("")
+    val chatInput: StateFlow<String> = _chatInput
+
+    // Telegram state
+    private val _detectedChatId = MutableStateFlow<Long?>(null)
+    val detectedChatId: StateFlow<Long?> = _detectedChatId
+
+    private val _botStatus = MutableStateFlow("Disconnected")
+    val botStatus: StateFlow<String> = _botStatus
+
+    // AIClient and Orchestrator (recreated when api key changes)
+    private var aiClient: NvidiaAIClient? = null
+    private var orchestrator: AgentOrchestrator? = null
+    val telegramBot = TelegramBot()
+
+    // Accessibility
+    private var accessibilityService: AgentAccessibilityService?
+        get() = AgentAccessibilityService.instance
 
     init {
-        if (modelName.value.isBlank()) {
-            viewModelScope.launch {
-                AgentApp.prefs.setNvidiaModel(NvidiaAIClient.KNOWN_MODELS.first())
+        viewModelScope.launch {
+            telegramBot.incomingMessages.collect { msg ->
+                if (msg != null) {
+                    if (_detectedChatId.value == null) {
+                        _detectedChatId.value = msg.chatId
+                    }
+                    // Auto-reply via AI if configured
+                    processTelegramMessage(msg)
+                }
             }
+        }
+        viewModelScope.launch {
+            telegramBot.status.collect { _botStatus.value = it }
         }
     }
 
-    private fun buildClient(): NvidiaAIClient? {
-        val key = apiKey.value
-        if (key.isBlank()) return null
-        return NvidiaAIClient(
-            apiKey = key,
-            baseUrl = baseUrl.value.ifBlank { "https://integrate.api.nvidia.com/v1" },
-            model = modelName.value.ifBlank { NvidiaAIClient.KNOWN_MODELS.first() }
-        )
-    }
-
-    fun updateBotToken(token: String) {
-        viewModelScope.launch { AgentApp.prefs.setTelegramBotToken(token) }
-    }
-
-    fun updateApiKey(key: String) {
-        viewModelScope.launch { AgentApp.prefs.setNvidiaApiKey(key) }
-        _aiClient = null
-        _testResult.value = null
-    }
-
-    fun updateBaseUrl(url: String) {
-        viewModelScope.launch { AgentApp.prefs.setNvidiaBaseUrl(url) }
-        _aiClient = null
-        _testResult.value = null
-    }
-
-    fun updateModel(model: String) {
-        viewModelScope.launch { AgentApp.prefs.setNvidiaModel(model) }
-        _aiClient = null
-    }
+    fun updateApiKey(value: String) { _apiKey.value = value }
+    fun updateBaseUrl(value: String) { _baseUrl.value = value }
+    fun updateModel(value: String) { _model.value = value }
+    fun updateBotToken(value: String) { _botToken.value = value }
+    fun updateChatInput(value: String) { _chatInput.value = value }
+    fun selectTab(index: Int) { _selectedTab.value = index }
 
     fun testApiConnection() {
-        val client = buildClient() ?: run {
-            _testResult.value = "Enter API Key first"
+        val key = _apiKey.value.trim()
+        if (key.isBlank()) {
+            _testResult.value = "Enter an API key first"
             return
         }
         _testLoading.value = true
         _testResult.value = "Testing..."
+
+        val client = NvidiaAIClient(
+            apiKey = key,
+            baseUrl = _baseUrl.value.trim().trimEnd('/'),
+            model = _model.value
+        )
+
         viewModelScope.launch {
             val result = client.testConnection()
-            result.onSuccess {
-                _testResult.value = "✅ API working! Model: ${client.model}"
-                _aiClient = client
+            result.onSuccess { msg ->
+                _testResult.value = "✅ $msg"
+                aiClient = client
+                orchestrator = AgentOrchestrator(client, accessibilityService)
             }
             result.onFailure { error ->
                 _testResult.value = "❌ ${error.message}"
@@ -114,92 +119,68 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun sendChatMessage(text: String) {
-        _chatMessages.value = _chatMessages.value + ChatMessage(text, true)
-        _chatLoading.value = true
+    fun startTelegramBot() {
+        val token = _botToken.value.trim()
+        if (token.isBlank()) return
+        telegramBot.start(token)
+    }
 
-        val client = _aiClient ?: buildClient()
-        if (client == null) {
-            _chatMessages.value = _chatMessages.value + ChatMessage(
-                "Enter NVIDIA API Key in Settings and tap 'Test API' first.", false
+    fun stopTelegramBot() {
+        telegramBot.stop()
+    }
+
+    fun sendMessage() {
+        val input = _chatInput.value.trim()
+        if (input.isBlank()) return
+        _chatInput.value = ""
+
+        val userMsg = ChatMessageUi(
+            text = input,
+            isUser = true
+        )
+        _messages.value = _messages.value + userMsg
+
+        val orch = orchestrator
+        if (orch == null) {
+            _messages.value = _messages.value + ChatMessageUi(
+                text = "Configure API key and test connection in Settings first",
+                isUser = false
             )
-            _chatLoading.value = false
             return
         }
 
+        _chatLoading.value = true
         viewModelScope.launch {
-            try {
-                val msgs = listOf(
-                    NvidiaAIClient.ChatMessage("system", client.getSystemPrompt()),
-                    NvidiaAIClient.ChatMessage("user", text)
-                )
-                val result = client.chat(msgs)
-                result.onSuccess { response ->
-                    val reply = response.choices?.firstOrNull()?.message?.content
-                    _chatMessages.value = _chatMessages.value + ChatMessage(
-                        reply ?: "Empty response", false
-                    )
-                }
-                result.onFailure { error ->
-                    _chatMessages.value = _chatMessages.value + ChatMessage(
-                        "API Error: ${error.message}", false
-                    )
-                }
-            } catch (e: Exception) {
-                _chatMessages.value = _chatMessages.value + ChatMessage(
-                    "Error: ${e.message ?: "Unknown"}", false
-                )
-            }
+            val reply = orch.processInput(input)
+            _messages.value = _messages.value + ChatMessageUi(
+                text = reply.ifEmpty { "[Actions executed]" },
+                isUser = false
+            )
             _chatLoading.value = false
         }
     }
 
-    fun setupAccessibilityService() {
-        AgentAccessibilityService.start(getApplication())
-    }
-
-    fun startAgent() {
-        val token = botToken.value
-        val key = apiKey.value
-        if (token.isBlank() || key.isBlank()) return
-        if (!AgentAccessibilityService.isRunning) {
-            setupAccessibilityService()
-        }
-
-        val ai = NvidiaAIClient(
-            apiKey = key,
-            baseUrl = baseUrl.value.ifBlank { "https://integrate.api.nvidia.com/v1" },
-            model = modelName.value.ifBlank { NvidiaAIClient.KNOWN_MODELS.first() }
-        )
-        _aiClient = ai
-        val bot = TelegramBotManager(botToken = token)
-
-        orchestrator?.stop()
-        orchestrator = AgentOrchestrator(ai, bot).also {
-            viewModelScope.launch { it.log.collect { newLog -> _logs.value = newLog } }
-            viewModelScope.launch { it.isRunning.collect { running -> _agentRunning.value = running } }
-            viewModelScope.launch {
-                it.detectedChatIdFlow.collect { id ->
-                    if (id.isNotBlank()) _detectedChatId.value = id
-                }
-            }
-            it.start()
-        }
-
-        viewModelScope.launch { AgentApp.prefs.setAgentEnabled(true) }
-    }
-
-    fun stopAgent() {
-        orchestrator?.stop()
-        orchestrator = null
-        viewModelScope.launch { AgentApp.prefs.setAgentEnabled(false) }
-    }
-
-    fun checkServiceStatus() {
-        _serviceStatus.value = AgentAccessibilityService.isRunning
-    }
-
     fun clearChat() {
-        _chatMessages.value = emptyList()
+        _messages.value = emptyList()
+        orchestrator?.clearHistory()
     }
+
+    private suspend fun processTelegramMessage(msg: com.agent.telegram.TelegramBot.TelegramMessage) {
+        val orch = orchestrator ?: return
+        val reply = orch.processInput(msg.text)
+        if (reply.isNotBlank()) {
+            telegramBot.sendMessage(msg.chatId, reply)
+        }
+        // Also show in chat UI
+        _messages.value = _messages.value + listOf(
+            ChatMessageUi(text = "[Telegram] ${msg.text}", isUser = true),
+            ChatMessageUi(text = reply.ifEmpty { "[Actions executed]" }, isUser = false)
+        )
+    }
+
+    data class ChatMessageUi(
+        val text: String,
+        val isUser: Boolean,
+        val timestamp: Long = System.currentTimeMillis()
+    )
 }

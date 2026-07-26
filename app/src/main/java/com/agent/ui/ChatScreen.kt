@@ -111,7 +111,7 @@ fun ChatScreen(
 
 @Composable
 private fun ChatBubble(msg: ChatMessageUi) {
-    val alignment = if (msg.isUser) Alignment.End else Alignment.Start
+    val alignment = if (msg.isUser) Alignment.TopEnd else Alignment.TopStart
     val bgColor = if (msg.isUser)
         MaterialTheme.colorScheme.primary
     else

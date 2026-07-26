@@ -62,7 +62,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     val telegramBot = TelegramBot()
 
     // Accessibility
-    private var accessibilityService: AgentAccessibilityService?
+    private val accessibilityService: AgentAccessibilityService?
         get() = AgentAccessibilityService.instance
 
     init {

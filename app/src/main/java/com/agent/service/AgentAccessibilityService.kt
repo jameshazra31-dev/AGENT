@@ -66,14 +66,14 @@ class AgentAccessibilityService : AccessibilityService() {
             is PhoneAction.ClickCoordinates -> clickCoordinates(action.x, action.y, action.callback)
             is PhoneAction.TypeText -> typeText(action.text, action.callback)
             is PhoneAction.Scroll -> scroll(action.direction, action.callback)
-            is PhoneAction.GoBack -> performGlobalAction(GLOBAL_ACTION_BACK, action.callback)
-            is PhoneAction.GoHome -> performGlobalAction(GLOBAL_ACTION_HOME, action.callback)
-            is PhoneAction.OpenRecentApps -> performGlobalAction(GLOBAL_ACTION_RECENTS, action.callback)
+            is PhoneAction.GoBack -> performGlobalAction(GLOBAL_ACTION_BACK, callback)
+            is PhoneAction.GoHome -> performGlobalAction(GLOBAL_ACTION_HOME, callback)
+            is PhoneAction.OpenRecentApps -> performGlobalAction(GLOBAL_ACTION_RECENTS, callback)
             is PhoneAction.Swipe -> swipe(action.x1, action.y1, action.x2, action.y2, action.callback)
             is PhoneAction.GetScreenContent -> getScreenContent(action.callback)
             is PhoneAction.Wait -> {
                 handler.postDelayed({
-                    action.callback(true)
+                    action.callback?.invoke(true)
                     callback?.invoke(true)
                 }, action.delayMs)
             }

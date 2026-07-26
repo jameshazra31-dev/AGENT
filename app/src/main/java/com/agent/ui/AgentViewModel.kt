@@ -29,8 +29,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs
 
-    val isRunning: StateFlow<Boolean> = _agentRunning
     private val _agentRunning = MutableStateFlow(false)
+    val isRunning: StateFlow<Boolean> = _agentRunning
 
     fun updateBotToken(token: String) {
         viewModelScope.launch { AgentApp.prefs.setTelegramBotToken(token) }

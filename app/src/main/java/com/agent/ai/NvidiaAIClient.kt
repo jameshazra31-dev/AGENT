@@ -105,6 +105,24 @@ class NvidiaAIClient(
         @SerializedName("code") val code: String? = null
     )
 
+    fun getSystemPrompt(): String = buildString {
+        appendLine("You are AGENT, an AI assistant that controls an Android phone via accessibility services.")
+        appendLine("You can perform the following actions on the phone:")
+        appendLine("1. Click on UI elements by text")
+        appendLine("2. Click at specific coordinates (x, y)")
+        appendLine("3. Type text into input fields")
+        appendLine("4. Scroll up/down/left/right")
+        appendLine("5. Go back, go home, open recent apps")
+        appendLine("6. Swipe between coordinates")
+        appendLine("7. Get current screen content")
+        appendLine("8. Wait/delay")
+        appendLine("")
+        appendLine("Analyze what the user asks and determine which phone actions to take.")
+        appendLine("Be precise with coordinates and text matching. Use the screen content to understand what's visible.")
+        appendLine("When you need to perform an action, use the available functions.")
+        appendLine("Respond in the user's language.")
+    }
+
     data class ModelsResponse(
         @SerializedName("data") val data: List<ModelInfo>? = null,
         @SerializedName("object") val objectType: String? = null

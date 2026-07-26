@@ -9,6 +9,8 @@ import com.agent.data.PreferencesManager
 class AgentApp : Application() {
 
     companion object {
+        const val CHANNEL_SERVICE = "agent_service"
+        const val CHANNEL_COMMANDS = "agent_commands"
         lateinit var instance: AgentApp
             private set
         lateinit var prefs: PreferencesManager
@@ -43,7 +45,4 @@ class AgentApp : Application() {
             nm.createNotificationChannel(channel2)
         }
     }
-
-    const val CHANNEL_SERVICE = "agent_service"
-    const val CHANNEL_COMMANDS = "agent_commands"
 }

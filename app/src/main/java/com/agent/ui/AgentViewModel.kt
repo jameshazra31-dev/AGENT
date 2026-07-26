@@ -3,7 +3,6 @@ package com.agent.ui
 import android.app.Application
 import android.content.Context
 import android.provider.Settings
-import android.text.TextUtils
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -75,8 +74,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val _actionLog = MutableStateFlow<List<String>>(emptyList())
     val actionLog: StateFlow<List<String>> = _actionLog.asStateFlow()
 
-    private var aiClient: NvidiaAIClient? = null
-    private var orchestrator: AgentOrchestrator? = null
+    @Volatile private var aiClient: NvidiaAIClient? = null
+    @Volatile private var orchestrator: AgentOrchestrator? = null
     val telegramBot = TelegramBot()
 
     init {
@@ -84,15 +83,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             telegramBot.incomingMessages.collect { msg ->
                 if (msg != null) {
-                    if (_detectedChatId.value == null) {
-                        _detectedChatId.value = msg.chatId
-                    }
-                    addMessage("[Telegram] ${msg.text}", isUser = true)
-                    if (_apiConnected.value) {
-                        processRemoteInput(msg.text, msg.chatId)
-                    } else {
-                        addMessage("Configure API first in Settings", isUser = false)
-                    }
+                    runCatching {
+                        if (_detectedChatId.value == null) {
+                            _detectedChatId.value = msg.chatId
+                        }
+                        addMessage("[Telegram] ${msg.text}", isUser = true)
+                        if (_apiConnected.value) {
+                            processRemoteInput(msg.text, msg.chatId)
+                        } else {
+                            addMessage("Configure API first in Settings", isUser = false)
+                        }
+                    }.onFailure { Log.e(TAG, "Telegram collect error", it) }
                 }
             }
         }
@@ -114,7 +115,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateModel(value: String) {
         _model.value = value
-        aiClient?.model = value
+        try { aiClient?.model = value } catch (_: Exception) {}
     }
 
     fun updateBotToken(value: String) { _botToken.value = value }
@@ -122,13 +123,15 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun selectTab(index: Int) { _selectedTab.value = index }
 
     fun checkAccessibility() {
-        val ctx = getApplication<Application>()
-        val enabled = Settings.Secure.getInt(
-            ctx.contentResolver,
-            Settings.Secure.ACCESSIBILITY_ENABLED,
-            0
-        ) == 1
-        _accessibilityEnabled.value = enabled
+        runCatching {
+            val ctx = getApplication<Application>()
+            val enabled = Settings.Secure.getInt(
+                ctx.contentResolver,
+                Settings.Secure.ACCESSIBILITY_ENABLED,
+                0
+            ) == 1
+            _accessibilityEnabled.value = enabled
+        }
     }
 
     fun fetchModels() {
@@ -139,18 +142,24 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         }
         _modelsLoading.value = true
         _modelsError.value = ""
-        val client = NvidiaAIClient(key, _baseUrl.value.trim().trimEnd('/'), _model.value)
         viewModelScope.launch {
-            val result = client.fetchModels()
-            result.onSuccess { models ->
-                _availableModels.value = models
-                if (models.isNotEmpty()) {
+            runCatching {
+                val client = NvidiaAIClient(key, _baseUrl.value.trim().trimEnd('/'), _model.value)
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { client.fetchModels() }
+                        .getOrNull() ?: Result.success(NvidiaAIClient.FALLBACK_MODELS)
+                }
+                result.onSuccess { models ->
+                    _availableModels.value = models
                     _modelsError.value = "Found ${models.size} models"
                 }
-            }
-            result.onFailure { error ->
-                _modelsError.value = "Error: ${error.message}"
+                result.onFailure { error ->
+                    _modelsError.value = "Error: ${error.message}"
+                    _availableModels.value = NvidiaAIClient.FALLBACK_MODELS
+                }
+            }.onFailure {
                 _availableModels.value = NvidiaAIClient.FALLBACK_MODELS
+                _modelsError.value = "Failed: ${it.message}"
             }
             _modelsLoading.value = false
         }
@@ -165,32 +174,31 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         _testLoading.value = true
         _testResult.value = "Testing..."
 
-        val client = NvidiaAIClient(
-            apiKey = key,
-            baseUrl = _baseUrl.value.trim().trimEnd('/'),
-            model = _model.value
-        )
-
         viewModelScope.launch {
-            try {
-                val result = client.testConnection()
+            runCatching {
+                val client = NvidiaAIClient(
+                    apiKey = key,
+                    baseUrl = _baseUrl.value.trim().trimEnd('/'),
+                    model = _model.value
+                )
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { client.testConnection() }
+                        .getOrNull() ?: Result.failure(Exception("Unknown error"))
+                }
                 result.onSuccess { msg ->
-                    _testResult.value = "✅ $msg"
+                    _testResult.value = msg
                     aiClient = client
                     orchestrator = AgentOrchestrator(client, AgentAccessibilityService.instance)
                     _apiConnected.value = true
-                    if (_availableModels.value.isEmpty()) {
-                        fetchModels()
-                    }
                 }
                 result.onFailure { error ->
                     _testResult.value = "❌ ${error.message ?: "Unknown error"}"
                     _apiConnected.value = false
-                    Log.e(TAG, "API test failed: ${error.message}")
                 }
-            } catch (e: Exception) {
-                _testResult.value = "❌ Crash: ${e.message}"
-                Log.e(TAG, "testConnection crash", e)
+            }.onFailure { error ->
+                _testResult.value = "❌ Crash caught: ${error.message ?: error.javaClass.simpleName}"
+                Log.e(TAG, "testConnection crash", error)
+                _apiConnected.value = false
             }
             _testLoading.value = false
         }
@@ -199,11 +207,11 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun startTelegramBot() {
         val token = _botToken.value.trim()
         if (token.isBlank()) return
-        telegramBot.start(token)
+        runCatching { telegramBot.start(token) }
     }
 
     fun stopTelegramBot() {
-        telegramBot.stop()
+        runCatching { telegramBot.stop() }
     }
 
     fun sendMessage() {
@@ -218,22 +226,23 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         addMessage(input, isUser = true)
         _chatLoading.value = true
         val orch = orchestrator ?: return
-        val currentActions = _actionLog.value.toMutableList()
 
         viewModelScope.launch {
-            try {
-                val reply = orch.processInput(input, ::onActionExecuted)
+            runCatching {
+                val reply = withContext(Dispatchers.IO) {
+                    runCatching {
+                        orch.processInput(input) { action ->
+                            _actionLog.value = _actionLog.value + action
+                        }
+                    }.getOrNull() ?: "Error processing"
+                }
                 addMessage(reply.ifEmpty { "[Actions executed]" }, isUser = false)
-            } catch (e: Exception) {
-                addMessage("Error: ${e.message}", isUser = false)
-                Log.e(TAG, "sendMessage error", e)
+            }.onFailure { error ->
+                addMessage("Error: ${error.message}", isUser = false)
+                Log.e(TAG, "sendMessage error", error)
             }
             _chatLoading.value = false
         }
-    }
-
-    private fun onActionExecuted(action: String) {
-        _actionLog.value = _actionLog.value + action
     }
 
     fun clearChat() {
@@ -243,16 +252,17 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun processRemoteInput(text: String, chatId: Long) {
-        val orch = orchestrator ?: return
-        try {
-            val reply = orch.processInput(text, ::onActionExecuted)
-            if (reply.isNotBlank()) {
-                telegramBot.sendMessage(chatId, reply)
+        runCatching {
+            val orch = orchestrator ?: return@runCatching
+            val reply = withContext(Dispatchers.IO) {
+                runCatching {
+                    orch.processInput(text) { action ->
+                        _actionLog.value = _actionLog.value + action
+                    }
+                }.getOrNull() ?: "Error"
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Telegram processing error", e)
-            telegramBot.sendMessage(chatId, "Error: ${e.message}")
-        }
+            if (reply.isNotBlank()) telegramBot.sendMessage(chatId, reply)
+        }.onFailure { Log.e(TAG, "Telegram processing error", it) }
     }
 
     private fun addMessage(text: String, isUser: Boolean) {

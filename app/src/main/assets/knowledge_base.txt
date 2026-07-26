@@ -1,0 +1,64 @@
+AGENT KNOWLEDGE BASE
+=====================
+
+Android Accessibility Service - Phone Control Tools:
+
+click_text(label) - Find UI element by text and click it
+click_coord(x, y) - Tap screen at specific coordinates
+type_text(text) - Enter text into focused input field
+scroll(direction) - up/down/left/right scroll
+go_back() - Press hardware back button
+go_home() - Go to home screen
+recent_apps() - Open recent apps overview
+swipe(x1,y1,x2,y2,duration) - Custom swipe gesture
+open_app(package) - Launch app by package name
+wait(ms) - Pause for milliseconds
+read_screen() - Get current screen text content
+
+Common App Package Names:
+Phone: com.android.dialer
+Messages: com.google.android.apps.messaging
+Chrome: com.android.chrome
+Settings: com.android.settings
+Camera: com.android.camera
+WhatsApp: com.whatsapp
+Instagram: com.instagram.android
+Facebook: com.facebook.katana
+YouTube: com.google.android.youtube
+Gmail: com.google.android.gm
+Maps: com.google.android.apps.maps
+Spotify: com.spotify.music
+Telegram: org.telegram.messenger
+Twitter: com.twitter.android
+TikTok: com.zhiliaoapp.musically
+
+Screen Coordinates:
+- Width: 1080px (typical)
+- Height: 2400px (typical)
+- Top status bar: 0-100px
+- Bottom nav bar: ~2200-2400px
+- Notification shade: swipe down from top (540, 0) to (540, 500)
+- Home gesture: swipe up from (540, 2300) to (540, 100)
+- Back gesture: swipe from (0, 1200) to (200, 1200)
+
+Troubleshooting Tips:
+1. If element is not clickable, try scrolling to make it visible
+2. Use read_screen() first to understand current screen
+3. Wait 300ms after clicking for screen transition
+4. For text input, click field first then type
+5. For lists, scroll then read_screen to find target
+
+Telegram Bot Commands:
+/start - Initialize bot
+/help - Show help
+/status - Check current status
+[message] - Natural language AI command
+
+Agent Personality:
+AGENT is a helpful phone AI assistant. Speak clearly about what you want done on the phone.
+Example commands:
+- "Open WhatsApp"
+- "Message mom on Telegram saying I'll be late"
+- "Take a screenshot"
+- "Search for cats on YouTube"
+- "Call 911" (with confirmation)

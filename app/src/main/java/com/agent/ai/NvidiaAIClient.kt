@@ -2,6 +2,7 @@ package com.agent.ai
 
 import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,27 +15,30 @@ import java.util.concurrent.TimeUnit
 class NvidiaAIClient(
     private val apiKey: String,
     private val baseUrl: String = "https://integrate.api.nvidia.com/v1",
-    val model: String = "meta/llama-3.1-405b-instruct"
+    var model: String = "meta/llama-3.1-405b-instruct"
 ) {
     private val gson = Gson()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
     companion object {
-        val KNOWN_MODELS = listOf(
+        val FALLBACK_MODELS = listOf(
             "meta/llama-3.1-405b-instruct",
             "meta/llama-3.1-70b-instruct",
             "meta/llama-3.1-8b-instruct",
+            "meta/llama-3.3-70b-instruct",
             "mistralai/mistral-large-2-instruct",
-            "mistralai/mistral-7b-instruct-v0.3",
+            "mistralai/mixtral-8x22b-instruct-v0.1",
             "google/gemma-2-27b-it",
             "google/gemma-2-9b-it",
             "microsoft/phi-3-mini-128k-instruct",
-            "nvidia/nemotron-4-340b-instruct"
+            "nvidia/nemotron-4-340b-instruct",
+            "deepseek-ai/deepseek-r1",
+            "qwen/qwen2.5-7b-instruct"
         )
     }
 
@@ -49,6 +53,7 @@ class NvidiaAIClient(
         @SerializedName("temperature") val temperature: Double = 0.7,
         @SerializedName("max_tokens") val maxTokens: Int = 1024,
         @SerializedName("top_p") val topP: Double = 0.95,
+        @SerializedName("stream") val stream: Boolean = false,
         @SerializedName("tools") val tools: List<ToolDef>? = null,
         @SerializedName("tool_choice") val toolChoice: String? = null
     )
@@ -95,45 +100,21 @@ class NvidiaAIClient(
 
     data class ErrorInfo(
         @SerializedName("message") val message: String? = null,
-        @SerializedName("code") val code: String? = null
+        @SerializedName("code") val code: String? = null,
+        @SerializedName("type") val type: String? = null
     )
 
-    fun getSystemPrompt(): String = buildString {
-        appendLine("You are AGENT, an AI assistant on an Android phone.")
-        appendLine("You can perform these actions:")
-        appendLine("- Click text: click_text(\"label\")")
-        appendLine("- Click coordinates: click_coord(x, y)")
-        appendLine("- Type text: type_text(\"text\")")
-        appendLine("- Scroll: scroll(direction) — up/down/left/right")
-        appendLine("- Navigate: go_back(), go_home(), recent_apps()")
-        appendLine("- Swipe: swipe(x1, y1, x2, y2, duration_ms)")
-        appendLine("- Wait: wait(ms)")
-        appendLine("- Read screen: read_screen() — gets current screen content")
-        appendLine("")
-        appendLine("Analyze the request and decide which action(s) to take.")
-        appendLine("Use function calls to execute actions. Respond conversationally to the user.")
-    }
-
-    suspend fun testConnection(): Result<String> {
+    suspend fun fetchModels(): Result<List<String>> {
         return withContext(Dispatchers.IO) {
             try {
-                val body = gson.toJson(
-                    ChatRequest(
-                        model = model,
-                        messages = listOf(
-                            ChatMessage("system", "Reply with just the word OK."),
-                            ChatMessage("user", "Say OK")
-                        ),
-                        maxTokens = 5,
-                        temperature = 0.1
-                    )
-                ).toRequestBody(jsonMediaType)
-
+                if (apiKey.isBlank()) {
+                    return@withContext Result.failure(Exception("API key is empty"))
+                }
                 val request = Request.Builder()
-                    .url("$baseUrl/chat/completions")
+                    .url("$baseUrl/models")
                     .header("Authorization", "Bearer $apiKey")
-                    .header("Content-Type", "application/json")
-                    .post(body)
+                    .header("Accept", "application/json")
+                    .get()
                     .build()
 
                 val response = client.newCall(request).execute()
@@ -141,25 +122,108 @@ class NvidiaAIClient(
 
                 if (!response.isSuccessful) {
                     val msg = try {
-                        gson.fromJson(bodyStr, ErrorInfo::class.java)?.message
-                            ?: bodyStr.take(200)
+                        val obj = JsonParser.parseString(bodyStr).asJsonObject
+                        val err = obj.getAsJsonObject("error")
+                        err?.get("message")?.asString ?: bodyStr.take(200)
                     } catch (_: Exception) {
-                        "HTTP ${response.code}: ${bodyStr.take(100)}"
+                        "HTTP ${response.code}"
                     }
                     return@withContext Result.failure(Exception(msg))
                 }
 
-                val parsed = gson.fromJson(bodyStr, ChatResponse::class.java)
+                val models = mutableListOf<String>()
+                try {
+                    val root = JsonParser.parseString(bodyStr).asJsonObject
+                    val data = root.getAsJsonArray("data")
+                    if (data != null) {
+                        for (i in 0 until data.size()) {
+                            val id = data[i].asJsonObject?.get("id")?.asString
+                            if (!id.isNullOrBlank()) models.add(id)
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                if (models.isEmpty()) {
+                    return@withContext Result.success(FALLBACK_MODELS)
+                }
+                Result.success(models)
+            } catch (e: Exception) {
+                Log.e("NvidiaAIClient", "fetchModels error", e)
+                Result.success(FALLBACK_MODELS)
+            }
+        }
+    }
+
+    suspend fun testConnection(): Result<String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                if (apiKey.isBlank()) {
+                    return@withContext Result.failure(Exception("API key is empty"))
+                }
+                val body = gson.toJson(
+                    ChatRequest(
+                        model = model,
+                        messages = listOf(
+                            ChatMessage("user", "Reply with just: OK")
+                        ),
+                        maxTokens = 5,
+                        temperature = 0.1,
+                        tools = null,
+                        toolChoice = null
+                    )
+                ).toRequestBody(jsonMediaType)
+
+                val request = Request.Builder()
+                    .url("$baseUrl/chat/completions")
+                    .header("Authorization", "Bearer $apiKey")
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .post(body)
+                    .build()
+
+                val response = client.newCall(request).execute()
+                val bodyStr = response.body?.string() ?: ""
+
+                if (!response.isSuccessful) {
+                    var msg = "HTTP ${response.code}"
+                    try {
+                        val root = JsonParser.parseString(bodyStr).asJsonObject
+                        val err = root.getAsJsonObject("error")
+                        if (err != null) {
+                            val m = err.get("message")?.asString
+                            if (!m.isNullOrBlank()) msg = m
+                        } else {
+                            val detail = root.get("detail")?.asString
+                            if (!detail.isNullOrBlank()) msg = detail
+                        }
+                    } catch (_: Exception) {
+                        if (bodyStr.isNotBlank()) msg = bodyStr.take(200)
+                    }
+                    Log.e("NvidiaAIClient", "testConnection failed: $msg")
+                    return@withContext Result.failure(Exception(msg))
+                }
+
+                val parsed = try {
+                    gson.fromJson(bodyStr, ChatResponse::class.java)
+                } catch (_: Exception) { null }
+
                 val reply = parsed?.choices?.firstOrNull()?.message?.content
+                    ?: parsed?.choices?.firstOrNull()?.message?.toolCalls?.let { "[Tool call]" }
 
                 if (reply != null) {
-                    Result.success("Connected to $model")
+                    Result.success("Connected: $model\nReply: $reply")
                 } else {
-                    Result.failure(Exception("Empty response — check base URL"))
+                    Result.failure(Exception("Empty reply from API"))
                 }
+            } catch (e: java.net.UnknownHostException) {
+                Log.e("NvidiaAIClient", "DNS error", e)
+                Result.failure(Exception("No internet / wrong URL"))
+            } catch (e: java.net.SocketTimeoutException) {
+                Log.e("NvidiaAIClient", "Timeout", e)
+                Result.failure(Exception("Request timed out"))
             } catch (e: Exception) {
                 Log.e("NvidiaAIClient", "testConnection error", e)
-                Result.failure(e)
+                Result.failure(Exception("Error: ${e.message ?: e.javaClass.simpleName}"))
             }
         }
     }
@@ -175,7 +239,8 @@ class NvidiaAIClient(
                         model = model,
                         messages = messages,
                         tools = tools,
-                        toolChoice = if (tools != null) "auto" else null
+                        toolChoice = if (tools != null) "auto" else null,
+                        maxTokens = 2048
                     )
                 ).toRequestBody(jsonMediaType)
 
@@ -183,6 +248,7 @@ class NvidiaAIClient(
                     .url("$baseUrl/chat/completions")
                     .header("Authorization", "Bearer $apiKey")
                     .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
                     .post(body)
                     .build()
 
@@ -190,17 +256,19 @@ class NvidiaAIClient(
                 val bodyStr = response.body?.string() ?: ""
 
                 if (!response.isSuccessful) {
-                    val msg = try {
-                        gson.fromJson(bodyStr, ErrorInfo::class.java)?.message
-                            ?: bodyStr.take(200)
+                    var msg = "HTTP ${response.code}"
+                    try {
+                        val root = JsonParser.parseString(bodyStr).asJsonObject
+                        val err = root.getAsJsonObject("error")
+                        val m = err?.get("message")?.asString
+                        if (!m.isNullOrBlank()) msg = m
                     } catch (_: Exception) {
-                        "HTTP ${response.code}: ${bodyStr.take(100)}"
+                        if (bodyStr.isNotBlank()) msg = bodyStr.take(200)
                     }
                     return@withContext Result.failure(Exception(msg))
                 }
 
                 val parsed = gson.fromJson(bodyStr, ChatResponse::class.java)
-
                 if (parsed?.error != null) {
                     Result.failure(Exception(parsed.error.message ?: "API error"))
                 } else if (parsed?.choices == null || parsed.choices.isEmpty()) {
@@ -210,7 +278,7 @@ class NvidiaAIClient(
                 }
             } catch (e: Exception) {
                 Log.e("NvidiaAIClient", "chat error", e)
-                Result.failure(e)
+                Result.failure(Exception("Error: ${e.message ?: e.javaClass.simpleName}"))
             }
         }
     }
